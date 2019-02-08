@@ -11,7 +11,6 @@ import android.os.Bundle
 import android.support.v4.widget.SwipeRefreshLayout
 import android.support.v7.widget.DividerItemDecoration
 import android.support.v7.widget.RecyclerView
-import android.util.Log
 import android.view.MenuItem
 import android.view.View
 import android.widget.ProgressBar
@@ -20,11 +19,14 @@ import droidkaigi.github.io.challenge2019.data.api.HackerNewsApi
 import droidkaigi.github.io.challenge2019.data.api.response.Item
 import droidkaigi.github.io.challenge2019.data.db.ArticlePreferences
 import droidkaigi.github.io.challenge2019.data.db.ArticlePreferences.Companion.saveArticleIds
+import droidkaigi.github.io.challenge2019.ingest.IngestManager
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
+import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 
 class MainActivity : BaseActivity() {
 
@@ -44,6 +46,8 @@ class MainActivity : BaseActivity() {
     private val itemsJsonAdapter =
         moshi.adapter<List<Item?>>(Types.newParameterizedType(List::class.java, Item::class.java))
 
+
+    private val ingestManager = IngestManager()
 
     override fun getContentView(): Int {
         return R.layout.activity_main
@@ -75,17 +79,19 @@ class MainActivity : BaseActivity() {
                     R.id.copy_url -> {
                         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.primaryClip = ClipData.newPlainText("url", item.url)
+                        track()
                     }
                     R.id.refresh -> {
                         hackerNewsApi.getItem(item.id).enqueue(object : Callback<Item> {
                             override fun onResponse(call: Call<Item>, response: Response<Item>) {
                                 response.body()?.let { newItem ->
                                     val index = storyAdapter.stories.indexOf(item)
-                                    if (index == -1 ) return
+                                    if (index == -1) return
 
                                     storyAdapter.stories[index] = newItem
                                     runOnUiThread {
-                                        storyAdapter.alreadyReadStories = ArticlePreferences.getArticleIds(this@MainActivity)
+                                        storyAdapter.alreadyReadStories =
+                                            ArticlePreferences.getArticleIds(this@MainActivity)
                                         storyAdapter.notifyItemChanged(index)
                                     }
                                 }
@@ -165,6 +171,7 @@ class MainActivity : BaseActivity() {
                             storyAdapter.stories = items.toMutableList()
                             storyAdapter.alreadyReadStories = ArticlePreferences.getArticleIds(this@MainActivity)
                             storyAdapter.notifyDataSetChanged()
+                            track()
                         }
                     }
 
@@ -179,7 +186,7 @@ class MainActivity : BaseActivity() {
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        when(resultCode) {
+        when (resultCode) {
             Activity.RESULT_OK -> {
                 data?.getLongExtra(StoryActivity.READ_ARTICLE_ID, 0L)?.let { id ->
                     if (id != 0L) {
@@ -216,6 +223,13 @@ class MainActivity : BaseActivity() {
         super.onDestroy()
         getStoriesTask?.run {
             if (!isCancelled) cancel(true)
+        }
+    }
+
+    private fun track() {
+        Executors.newSingleThreadExecutor().submit {
+            val res = ingestManager.track()
+            Timber.d("IngestManager#track response = $res")
         }
     }
 }
